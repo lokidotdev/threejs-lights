@@ -2,6 +2,7 @@ import * as THREE from "three";
 import "./App.css";
 import { useEffect } from "react";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { RectAreaLightHelper } from "three/addons/helpers/RectAreaLightHelper.js";
 import GUI from "lil-gui";
 
@@ -254,6 +255,91 @@ function App() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; // smooth camera motion
 
+    //> per-model move control (drag gizmo to translate whichever mesh is selected)
+    const models = { none: null, box, sphere, torus };
+    const movableModels = { box: false, sphere: false, torus: false };
+
+    const transformControls = new TransformControls(
+      camera,
+      renderer.domElement
+    );
+    transformControls.setMode("translate");
+    transformControls.enabled = false;
+    transformControls.visible = false;
+    scene.add(transformControls.getHelper());
+
+    // dragging the gizmo shouldn't also orbit the camera
+    transformControls.addEventListener("dragging-changed", (event) => {
+      controls.enabled = !event.value;
+    });
+
+    const modelControlFolder = gui.addFolder("Model move control");
+    const modelSelection = { selected: "none" };
+    const modelSelectController = modelControlFolder
+      .add(modelSelection, "selected", Object.keys(models))
+      .name("select model")
+      .onChange(selectModel);
+
+    function selectModel(name) {
+      modelSelection.selected = name;
+      modelSelectController.updateDisplay();
+
+      Object.keys(movableModels).forEach((key) => {
+        movableModels[key] = key === name;
+      });
+
+      const target = models[name];
+      if (target) {
+        transformControls.attach(target);
+        transformControls.enabled = true;
+        transformControls.visible = true;
+      } else {
+        transformControls.detach();
+        transformControls.enabled = false;
+        transformControls.visible = false;
+      }
+    }
+
+    // click a mesh to toggle its move control on/off
+    const raycaster = new THREE.Raycaster();
+    const pointerNDC = new THREE.Vector2();
+    const pickableMeshes = [box, sphere, torus];
+    const meshNames = new Map([
+      [box, "box"],
+      [sphere, "sphere"],
+      [torus, "torus"],
+    ]);
+
+    let clickStartPos = null;
+
+    const onCanvasPointerDown = (event) => {
+      clickStartPos = { x: event.clientX, y: event.clientY };
+    };
+
+    const onCanvasPointerUp = (event) => {
+      if (!clickStartPos) return;
+      const movedDistance = Math.hypot(
+        event.clientX - clickStartPos.x,
+        event.clientY - clickStartPos.y
+      );
+      clickStartPos = null;
+      if (movedDistance > 5) return; // was a drag (camera orbit / gizmo), not a click
+
+      const rect = canvas.getBoundingClientRect();
+      pointerNDC.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNDC.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(pointerNDC, camera);
+      const [hit] = raycaster.intersectObjects(pickableMeshes);
+      if (!hit) return;
+
+      const name = meshNames.get(hit.object);
+      selectModel(name === modelSelection.selected ? "none" : name);
+    };
+
+    canvas.addEventListener("pointerdown", onCanvasPointerDown);
+    canvas.addEventListener("pointerup", onCanvasPointerUp);
+
     let animationId;
     const clock = new THREE.Clock();
     function tick() {
@@ -269,13 +355,19 @@ function App() {
 
       const elapsedTime = clock.getElapsedTime();
 
-      sphere.rotation.x = 0.1 * elapsedTime;
-      torus.rotation.x = 0.1 * elapsedTime;
-      box.rotation.x = 0.1 * elapsedTime;
-
-      sphere.rotation.y = 0.1 * elapsedTime;
-      torus.rotation.y = 0.1 * elapsedTime;
-      box.rotation.y = 0.1 * elapsedTime;
+      // skip the automatic spin for the model currently being moved
+      if (!movableModels.sphere) {
+        sphere.rotation.x = 0.1 * elapsedTime;
+        sphere.rotation.y = 0.1 * elapsedTime;
+      }
+      if (!movableModels.torus) {
+        torus.rotation.x = 0.1 * elapsedTime;
+        torus.rotation.y = 0.1 * elapsedTime;
+      }
+      if (!movableModels.box) {
+        box.rotation.x = 0.1 * elapsedTime;
+        box.rotation.y = 0.1 * elapsedTime;
+      }
     }
     tick();
 
@@ -286,16 +378,25 @@ function App() {
 
       // remove event listeners
       window.removeEventListener("resize", onResize);
+      canvas.removeEventListener("pointerdown", onCanvasPointerDown);
+      canvas.removeEventListener("pointerup", onCanvasPointerUp);
 
       // dispose controls and GUI
       controls.dispose();
+      transformControls.dispose();
+      gui.destroy();
 
       // dispose renderer
       renderer.dispose();
     };
   }, []);
 
-  return <canvas className="webgl"></canvas>;
+  return (
+    <>
+      <canvas className="webgl"></canvas>
+      <div className="tooltip">Click on a model to move it around</div>
+    </>
+  );
 }
 
 export default App;

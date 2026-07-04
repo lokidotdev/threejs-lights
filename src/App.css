@@ -14,3 +14,18 @@
   height: 100%;
   outline: none;
 }
+
+.tooltip {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
+  font-family: sans-serif;
+  pointer-events: none;
+  z-index: 10;
+}
