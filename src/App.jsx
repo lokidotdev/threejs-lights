@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { RectAreaLightHelper } from "three/addons/helpers/RectAreaLightHelper.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import Stats from "three/examples/jsm/libs/stats.module.js";
 import GUI from "lil-gui";
 
 function App() {
@@ -14,34 +16,124 @@ function App() {
     //? debug ui
     const gui = new GUI();
 
+    //? presets - save/load the whole GUI state to localStorage
+    // const PRESET_STORAGE_KEY = "threejs-lights-preset";
+    // const presetActions = {
+    //   save: () => {
+    //     localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(gui.save()));
+    //   },
+    //   load: () => {
+    //     const saved = localStorage.getItem(PRESET_STORAGE_KEY);
+    //     if (!saved) return;
+    //     gui.load(JSON.parse(saved));
+    //   },
+    // };
+    // const presetsFolder = gui.addFolder("Presets");
+    // presetsFolder.add(presetActions, "save").name("save preset");
+    // presetsFolder.add(presetActions, "load").name("load preset");
+
     const sizes = {
       width: window.innerWidth,
       height: window.innerHeight,
     };
 
+    //> material playground - swap material type and tweak shared PBR params
+    const materialParams = {
+      type: "standard",
+      color: "#ffffff",
+      roughness: 0.5,
+      metalness: 0.5,
+      envMapIntensity: 1,
+    };
+
+    function createMaterial(type) {
+      let newMaterial;
+      if (type === "physical") newMaterial = new THREE.MeshPhysicalMaterial();
+      else if (type === "toon") newMaterial = new THREE.MeshToonMaterial();
+      else newMaterial = new THREE.MeshStandardMaterial();
+
+      newMaterial.side = THREE.DoubleSide;
+      newMaterial.color.set(materialParams.color);
+      if ("roughness" in newMaterial)
+        newMaterial.roughness = materialParams.roughness;
+      if ("metalness" in newMaterial)
+        newMaterial.metalness = materialParams.metalness;
+      if ("envMapIntensity" in newMaterial)
+        newMaterial.envMapIntensity = materialParams.envMapIntensity;
+      return newMaterial;
+    }
+
+    let material = createMaterial(materialParams.type);
+
     const geomtery = new THREE.BoxGeometry();
-    const material = new THREE.MeshStandardMaterial();
-    material.side = THREE.DoubleSide;
 
     //? mehses
     const box = new THREE.Mesh(geomtery, material);
+    box.castShadow = true;
+    box.receiveShadow = true;
     scene.add(box);
 
     const sphereGeometry = new THREE.SphereGeometry(0.5, 32, 32);
     const sphere = new THREE.Mesh(sphereGeometry, material);
+    sphere.castShadow = true;
+    sphere.receiveShadow = true;
     scene.add(sphere);
     sphere.position.x = 1.5;
 
     const torusGeometry = new THREE.TorusGeometry(0.3, 0.2, 20, 45);
     const torus = new THREE.Mesh(torusGeometry, material);
+    torus.castShadow = true;
+    torus.receiveShadow = true;
     torus.position.x = -1.5;
     scene.add(torus);
 
     const planeGeometry = new THREE.PlaneGeometry(10, 10, 100, 100);
     const plane = new THREE.Mesh(planeGeometry, material);
+    plane.receiveShadow = true;
     plane.rotation.x = -Math.PI / 2;
     plane.position.y = -1;
     scene.add(plane);
+
+    const meshesUsingMaterial = [box, sphere, torus, plane];
+
+    const materialFolder = gui.addFolder("Material").close();
+    materialFolder
+      .add(materialParams, "type", ["standard", "physical", "toon"])
+      .name("material type")
+      .onChange(applyMaterialType);
+    materialFolder.addColor(materialParams, "color").onChange(() => {
+      material.color.set(materialParams.color);
+    });
+    const roughnessController = materialFolder
+      .add(materialParams, "roughness", 0, 1, 0.01)
+      .onChange((value) => {
+        if ("roughness" in material) material.roughness = value;
+      });
+    const metalnessController = materialFolder
+      .add(materialParams, "metalness", 0, 1, 0.01)
+      .onChange((value) => {
+        if ("metalness" in material) material.metalness = value;
+      });
+    const envIntensityController = materialFolder
+      .add(materialParams, "envMapIntensity", 0, 3, 0.01)
+      .name("env intensity")
+      .onChange((value) => {
+        if ("envMapIntensity" in material) material.envMapIntensity = value;
+      });
+
+    function applyMaterialType(type) {
+      const oldMaterial = material;
+      material = createMaterial(type);
+      meshesUsingMaterial.forEach((mesh) => {
+        mesh.material = material;
+      });
+      oldMaterial.dispose();
+
+      const supportsPBR = type !== "toon";
+      roughnessController.enable(supportsPBR);
+      metalnessController.enable(supportsPBR);
+      envIntensityController.enable(supportsPBR);
+    }
 
     //? camera
     const camera = new THREE.PerspectiveCamera(
@@ -72,6 +164,7 @@ function App() {
     //> point light
     const pointLight = new THREE.PointLight(0xffffff, 3, 3);
     pointLight.position.y = 1.5;
+    pointLight.shadow.mapSize.set(1024, 1024);
     scene.add(pointLight);
 
     //?helper
@@ -86,6 +179,7 @@ function App() {
     const pointLightFolder = gui.addFolder("point light");
     pointLightFolder.add(pointLight, "visible");
     pointLightFolder.add(pointLightHelper, "visible").name("helper");
+    pointLightFolder.add(pointLight, "castShadow").name("cast shadow");
     pointLightFolder.addColor(pointLight, "color");
     pointLightFolder.add(pointLight, "intensity", 0, 5, 0.01);
     const pointLightPosition = pointLightFolder.addFolder("position");
@@ -96,6 +190,9 @@ function App() {
     //> directinal light
     const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
     directionalLight.visible = false;
+    directionalLight.shadow.mapSize.set(1024, 1024);
+    directionalLight.shadow.camera.near = 0.1;
+    directionalLight.shadow.camera.far = 15;
     scene.add(directionalLight);
 
     //?helper
@@ -112,6 +209,9 @@ function App() {
     directionalLightFolder
       .add(directionalLightHelper, "visible")
       .name("helper");
+    directionalLightFolder
+      .add(directionalLight, "castShadow")
+      .name("cast shadow");
     directionalLightFolder.addColor(directionalLight, "color");
     directionalLightFolder.add(directionalLight, "intensity", 0, 5, 0.01);
     const directionalLightPosition =
@@ -199,6 +299,7 @@ function App() {
     );
     spotLight.target.position.x = 1;
     spotLight.visible = false;
+    spotLight.shadow.mapSize.set(1024, 1024);
     scene.add(spotLight.target);
     scene.add(spotLight);
 
@@ -211,6 +312,7 @@ function App() {
     const spotLightFolder = gui.addFolder("Spotlight light").close();
     spotLightFolder.add(spotLight, "visible");
     spotLightFolder.add(spotLightHelper, "visible").name("helper");
+    spotLightFolder.add(spotLight, "castShadow").name("cast shadow");
     spotLightFolder.addColor(spotLight, "color");
     spotLightFolder.add(spotLight, "intensity", 0, 20, 0.01);
     spotLightFolder.add(spotLight, "distance", 0, 10, 0.01);
@@ -236,6 +338,39 @@ function App() {
     const renderer = new THREE.WebGLRenderer({ canvas });
     renderer.setSize(sizes.width, sizes.height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    //> environment map - gives PBR materials something to reflect
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const environmentTexture = pmremGenerator.fromScene(
+      new RoomEnvironment(),
+      0.04
+    ).texture;
+
+    const environmentParams = { enabled: false, showBackground: false };
+    function applyEnvironment() {
+      scene.environment = environmentParams.enabled ? environmentTexture : null;
+      scene.background =
+        environmentParams.enabled && environmentParams.showBackground
+          ? environmentTexture
+          : null;
+    }
+    applyEnvironment();
+
+    const environmentFolder = gui.addFolder("Environment").close();
+    environmentFolder
+      .add(environmentParams, "enabled")
+      .name("env lighting")
+      .onChange(applyEnvironment);
+    environmentFolder
+      .add(environmentParams, "showBackground")
+      .name("show as background")
+      .onChange(applyEnvironment);
+
+    //> fps stats panel
+    const stats = new Stats();
+    document.body.appendChild(stats.dom);
 
     // Resize handler
     const onResize = () => {
@@ -273,12 +408,55 @@ function App() {
       controls.enabled = !event.value;
     });
 
+    const initialTransforms = {
+      box: {
+        position: box.position.clone(),
+        rotation: box.rotation.clone(),
+        scale: box.scale.clone(),
+      },
+      sphere: {
+        position: sphere.position.clone(),
+        rotation: sphere.rotation.clone(),
+        scale: sphere.scale.clone(),
+      },
+      torus: {
+        position: torus.position.clone(),
+        rotation: torus.rotation.clone(),
+        scale: torus.scale.clone(),
+      },
+    };
+
     const modelControlFolder = gui.addFolder("Model move control");
     const modelSelection = { selected: "none" };
     const modelSelectController = modelControlFolder
       .add(modelSelection, "selected", Object.keys(models))
       .name("select model")
       .onChange(selectModel);
+
+    const transformModeParams = { mode: "translate" };
+    const transformModeController = modelControlFolder
+      .add(transformModeParams, "mode", ["translate", "rotate", "scale"])
+      .name("gizmo mode")
+      .onChange(setTransformMode);
+
+    const resetActions = {
+      reset: () => {
+        const name = modelSelection.selected;
+        if (name === "none") return;
+        const target = models[name];
+        const initial = initialTransforms[name];
+        target.position.copy(initial.position);
+        target.rotation.copy(initial.rotation);
+        target.scale.copy(initial.scale);
+      },
+    };
+    modelControlFolder.add(resetActions, "reset").name("reset selected position");
+
+    function setTransformMode(mode) {
+      transformModeParams.mode = mode;
+      transformModeController.updateDisplay();
+      transformControls.setMode(mode);
+    }
 
     function selectModel(name) {
       modelSelection.selected = name;
@@ -340,9 +518,20 @@ function App() {
     canvas.addEventListener("pointerdown", onCanvasPointerDown);
     canvas.addEventListener("pointerup", onCanvasPointerUp);
 
+    // keyboard shortcuts for gizmo mode while a model is selected
+    const onKeyDown = (event) => {
+      if (!transformControls.enabled) return;
+      if (event.key === "t") setTransformMode("translate");
+      else if (event.key === "r") setTransformMode("rotate");
+      else if (event.key === "s") setTransformMode("scale");
+    };
+    window.addEventListener("keydown", onKeyDown);
+
     let animationId;
     const clock = new THREE.Clock();
     function tick() {
+      stats.begin();
+
       // update controls for damping
       controls.update();
       pointLightHelper.update();
@@ -368,6 +557,8 @@ function App() {
         box.rotation.x = 0.1 * elapsedTime;
         box.rotation.y = 0.1 * elapsedTime;
       }
+
+      stats.end();
     }
     tick();
 
@@ -378,15 +569,22 @@ function App() {
 
       // remove event listeners
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("keydown", onKeyDown);
       canvas.removeEventListener("pointerdown", onCanvasPointerDown);
       canvas.removeEventListener("pointerup", onCanvasPointerUp);
+
+      // remove stats panel
+      document.body.removeChild(stats.dom);
 
       // dispose controls and GUI
       controls.dispose();
       transformControls.dispose();
       gui.destroy();
 
-      // dispose renderer
+      // dispose material, environment map and renderer
+      material.dispose();
+      environmentTexture.dispose();
+      pmremGenerator.dispose();
       renderer.dispose();
     };
   }, []);
